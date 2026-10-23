@@ -2,7 +2,7 @@
  {
   "coin": "BTC",
   "symbol": "BINANCE:BTCUSDT",
-  "price": 81692.01,
+  "price": 81282.33,
   "signal": "Kein Signal",
   "position": "Flat",
   "qty": null,
@@ -10,12 +10,12 @@
   "stop": null,
   "target": null,
   "unrealized": 0,
-  "checked_at": "2026-10-23T16:35:35Z"
+  "checked_at": "2026-10-23T20:30:10Z"
  },
  {
   "coin": "ETH",
   "symbol": "BINANCE:ETHUSDT",
-  "price": 2407.85,
+  "price": 2394.51,
   "signal": "Kein Signal",
   "position": "Flat",
   "qty": null,
@@ -23,12 +23,12 @@
   "stop": null,
   "target": null,
   "unrealized": 0,
-  "checked_at": "2026-10-23T16:35:35Z"
+  "checked_at": "2026-10-23T20:30:10Z"
  },
  {
   "coin": "SOL",
   "symbol": "BINANCE:SOLUSDT",
-  "price": 104.77,
+  "price": 103.56,
   "signal": "Kein Signal",
   "position": "Flat",
   "qty": null,
@@ -36,6 +36,6 @@
   "stop": null,
   "target": null,
   "unrealized": 0,
-  "checked_at": "2026-10-23T16:35:35Z"
+  "checked_at": "2026-10-23T20:30:10Z"
  }
 ]
