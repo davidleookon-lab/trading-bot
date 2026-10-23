@@ -131,6 +131,20 @@ def atr(bars, n):
     return out
 
 
+def chart_rows(coin, bars, n=90):
+    """Letzte n Kerzen mit EMA, RSI und Signal – für die Charts auf der Übersichtsseite."""
+    c = [b["c"] for b in bars]
+    e, r = ema(c, EMA_LEN), rsi(c, RSI_LEN)
+    sig, _ = signals(bars)
+    out = []
+    for i in range(max(0, len(bars) - n), len(bars)):
+        b = bars[i]
+        out.append({"coin": coin, "t": iso(b["t"]), "o": b["o"], "h": b["h"], "l": b["l"], "c": b["c"],
+                    "ema": round(e[i], 6) if e[i] is not None else None,
+                    "rsi": round(r[i], 2) if r[i] is not None else None, "sig": sig[i]})
+    return out
+
+
 def signals(bars):
     """Signal je Kerze: 1 Long, -1 Short, 0 nichts – plus ATR für den Stop."""
     c = [b["c"] for b in bars]
@@ -287,10 +301,11 @@ def run():
     trades = load("trades.json", [{"id": "0", "kind": "Konto", "at": iso(int(time.time() * 1000)),
                                    "note": "Simuliertes Konto Claude Bot (Python) mit 100.000 $ eröffnet"}])
     equity = load("equity.json", [])
-    markets, prices, log = [], {}, []
+    markets, prices, log, candles = [], {}, [], []
     for c in COINS:
         bars, source = fetch_live(c)              # letzte geschlossene 4h-Kerzen
         sig, a = signals(bars)
+        candles += chart_rows(c, bars)
         last_t = acct["last_bar"].get(c)
         new = [i for i, b in enumerate(bars) if last_t is None or b["t"] > last_t]
         if last_t is None:
@@ -329,6 +344,7 @@ def run():
     save("trades.json", trades)
     save("equity.json", equity)
     save("markets.json", markets)
+    save("candles.json", candles)
     print(f"{now}  Equity {de(acct['equity'])} $  " + (" | ".join(log) or "kein neues Signal"))
 
 
