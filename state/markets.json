@@ -10,7 +10,7 @@
   "stop": null,
   "target": null,
   "unrealized": 0,
-  "checked_at": "2026-10-23T13:36:49Z"
+  "checked_at": "2026-10-23T13:50:17Z"
  },
  {
   "coin": "ETH",
@@ -23,7 +23,7 @@
   "stop": null,
   "target": null,
   "unrealized": 0,
-  "checked_at": "2026-10-23T13:36:49Z"
+  "checked_at": "2026-10-23T13:50:17Z"
  },
  {
   "coin": "SOL",
@@ -36,6 +36,6 @@
   "stop": null,
   "target": null,
   "unrealized": 0,
-  "checked_at": "2026-10-23T13:36:49Z"
+  "checked_at": "2026-10-23T13:50:17Z"
  }
 ]
