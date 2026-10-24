@@ -24,7 +24,8 @@ import urllib.request
 from datetime import datetime, timezone
 
 # ───── Einstellungen ─────
-COINS = ["BTC", "ETH", "SOL"]
+UNIVERSE = ["BTC", "ETH", "SOL", "XRP", "BNB", "DOGE", "AVAX", "LINK"]
+DEFAULT_COINS = ["BTC", "ETH", "SOL"]
 QUOTE = "USDT"
 INTERVAL = "4h"
 BAR_MS = 4 * 60 * 60 * 1000
@@ -33,12 +34,15 @@ RSI_LO, RSI_HI = 35, 65
 SL_ATR, RR = 1.5, 2.0
 RISK, MAX_POS_FRAC, FEE = 0.02, 0.6, 0.001
 START_EQUITY = 100_000.0
-MAX_POSITIONS = 3
+MAX_POSITIONS = 4
 VERSION = "TrendRSI v3 (Python)"
 
 DATA_URL = "https://data-api.binance.vision/api/v3/klines"
 KRAKEN_URL = "https://api.kraken.com/0/public/OHLC"
-KRAKEN_PAIRS = {"BTC": "XBTUSD", "ETH": "ETHUSD", "SOL": "SOLUSD"}
+KRAKEN_PAIRS = {"BTC": "XBTUSD", "ETH": "ETHUSD", "SOL": "SOLUSD", "XRP": "XRPUSD", "BNB": "BNBUSD",
+                "DOGE": "XDGUSD", "AVAX": "AVAXUSD", "LINK": "LINKUSD"}
+DEFAULT_PARAMS = {"rsi_lo": 35, "rsi_hi": 65, "sl_atr": 1.5, "rr": 2.0, "adx_min": 0, "coins": DEFAULT_COINS,
+                  "version": "TrendRSI v3", "since": None}
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATE_DIR = os.path.join(HERE, "state")
 
@@ -131,11 +135,33 @@ def atr(bars, n):
     return out
 
 
-def chart_rows(coin, bars, n=90):
+def adx(bars, n=14):
+    """ADX nach Wilder – misst, wie stark ein Trend ist (über ~20 = Trend, darunter = Seitwärts)."""
+    pdm, ndm, tr = [0.0], [0.0], [bars[0]["h"] - bars[0]["l"]]
+    for p, b in zip(bars, bars[1:]):
+        up, dn = b["h"] - p["h"], p["l"] - b["l"]
+        pdm.append(up if up > dn and up > 0 else 0.0)
+        ndm.append(dn if dn > up and dn > 0 else 0.0)
+        tr.append(max(b["h"] - b["l"], abs(b["h"] - p["c"]), abs(b["l"] - p["c"])))
+    def wild(v):
+        out, r = [], None
+        for i, x in enumerate(v):
+            if i < n:
+                out.append(None)
+                continue
+            r = sum(v[1:n + 1]) if r is None else r - r / n + x
+            out.append(r)
+        return out
+    st, sp, sn = wild(tr), wild(pdm), wild(ndm)
+    dx = [None if a is None or a == 0 else 100 * abs(p - m) / (p + m) if (p + m) else 0 for a, p, m in zip(st, sp, sn)]
+    return rma([0.0 if v is None else v for v in dx], n)
+
+
+def chart_rows(coin, bars, n=90, p=None):
     """Letzte n Kerzen mit EMA, RSI und Signal – für die Charts auf der Übersichtsseite."""
     c = [b["c"] for b in bars]
     e, r = ema(c, EMA_LEN), rsi(c, RSI_LEN)
-    sig, _ = signals(bars)
+    sig, _ = signals(bars, p)
     out = []
     for i in range(max(0, len(bars) - n), len(bars)):
         b = bars[i]
@@ -145,32 +171,43 @@ def chart_rows(coin, bars, n=90):
     return out
 
 
-def signals(bars):
+def signals(bars, p=None, cache=None):
     """Signal je Kerze: 1 Long, -1 Short, 0 nichts – plus ATR für den Stop."""
-    c = [b["c"] for b in bars]
-    e, r, a = ema(c, EMA_LEN), rsi(c, RSI_LEN), atr(bars, ATR_LEN)
+    p = p or DEFAULT_PARAMS
+    if cache is None:
+        c = [b["c"] for b in bars]
+        cache = {"c": c, "e": ema(c, EMA_LEN), "r": rsi(c, RSI_LEN), "a": atr(bars, ATR_LEN),
+                 "x": adx(bars) if p.get("adx_min") else None}
+    c, e, r, a = cache["c"], cache["e"], cache["r"], cache["a"]
+    if p.get("adx_min") and cache.get("x") is None:
+        cache["x"] = adx(bars)
+    x = cache.get("x")
+    lo, hi, amin = p["rsi_lo"], p["rsi_hi"], p.get("adx_min", 0)
     sig = [0] * len(bars)
     for i in range(1, len(bars)):
         if None in (e[i], r[i], r[i - 1], a[i]):
             continue
-        if c[i] > e[i] and r[i] > RSI_LO and r[i - 1] < RSI_LO:
+        if amin and (x[i] is None or x[i] < amin):
+            continue
+        if c[i] > e[i] and r[i] > lo and r[i - 1] < lo:
             sig[i] = 1
-        elif c[i] < e[i] and r[i] < RSI_HI and r[i - 1] > RSI_HI:
+        elif c[i] < e[i] and r[i] < hi and r[i - 1] > hi:
             sig[i] = -1
     return sig, a
 
 
 # ───── Konto-Logik (gemeinsam für Backtest und Live) ─────
-def open_position(acct, coin, side, price, atr_v, t):
-    dist = SL_ATR * atr_v
+def open_position(acct, coin, side, price, atr_v, t, p=None):
+    p = p or DEFAULT_PARAMS
+    dist = p["sl_atr"] * atr_v
     if dist <= 0 or coin in acct["positions"] or len(acct["positions"]) >= MAX_POSITIONS:
         return None
     eq = acct["equity"]
     qty = min(RISK * eq / dist, MAX_POS_FRAC * eq / price)
     pos = {
         "coin": coin, "side": side, "qty": qty, "entry": price,
-        "stop": price - side * dist, "target": price + side * RR * dist,
-        "risk_usd": qty * dist, "opened_at": t,
+        "stop": price - side * dist, "target": price + side * p["rr"] * dist,
+        "risk_usd": qty * dist, "opened_at": t, "version": p.get("version", VERSION),
     }
     acct["cash"] -= qty * price * FEE
     acct["positions"][coin] = pos
@@ -197,7 +234,7 @@ def check_exit(acct, coin, bar):
         "side": "Long" if s == 1 else "Short", "entry": p["entry"], "exit": exit_px, "qty": p["qty"],
         "opened_at": p["opened_at"], "closed_at": bar["t"] + BAR_MS,
         "pnl": gross - fee - p["entry"] * p["qty"] * FEE,
-        "r": (gross - fee - p["entry"] * p["qty"] * FEE) / p["risk_usd"], "strategy": VERSION,
+        "r": (gross - fee - p["entry"] * p["qty"] * FEE) / p["risk_usd"], "strategy": p.get("version", VERSION),
     }
     del acct["positions"][coin]
     return trade
@@ -233,11 +270,12 @@ def backtest(start="2024-01-01", split="2025-07-01"):
     split_ms = int(datetime.fromisoformat(split).replace(tzinfo=timezone.utc).timestamp() * 1000)
     warm = start_ms - (EMA_LEN + 50) * BAR_MS
     data = {}
-    for c in COINS:
+    for c in DEFAULT_COINS:
         bars = fetch_klines(c + QUOTE, warm)
         sig, a = signals(bars)
         data[c] = {"bars": bars, "sig": sig, "atr": a, "idx": {b["t"]: i for i, b in enumerate(bars)}}
         print(f"{c}: {len(bars)} Kerzen geladen")
+    COINS = DEFAULT_COINS
     times = sorted({b["t"] for c in COINS for b in data[c]["bars"] if b["t"] >= start_ms})
     for label, lo, hi in (("Lern-Zeitraum", start_ms, split_ms), ("Prüf-Zeitraum", split_ms, 10**15)):
         acct, trades, curve = new_account(), [], [START_EQUITY]
@@ -270,6 +308,115 @@ def backtest(start="2024-01-01", split="2025-07-01"):
             print(f"  {c}: {len(ts):3d} Trades, Ergebnis {'+' if pnl >= 0 else ''}{de(pnl)} $")
 
 
+# ───── Selbst-Lernen (wöchentlich, Walk-Forward) ─────
+GRID = [{"rsi_lo": lo, "rsi_hi": 100 - lo, "sl_atr": sl, "rr": rr, "adx_min": ax}
+        for lo in (30, 35, 40) for sl in (1.0, 1.5, 2.0) for rr in (1.5, 2.0, 3.0) for ax in (0, 20, 25)]
+
+
+def sim_r(bars, sig, a, p, lo, hi):
+    """Trades als R-Vielfache (inkl. Gebühren) zwischen Kerzen-Index lo und hi."""
+    out, i = [], max(lo, 1)
+    while i < hi:
+        if sig[i]:
+            s, entry, dist = sig[i], bars[i]["c"], p["sl_atr"] * a[i]
+            stop, tgt, fee_r = entry - s * dist, entry + s * p["rr"] * dist, 0.002 * entry / dist
+            j = i + 1
+            while j < hi:
+                b = bars[j]
+                if (b["l"] <= stop) if s == 1 else (b["h"] >= stop):
+                    out.append(-1 - fee_r)
+                    break
+                if (b["h"] >= tgt) if s == 1 else (b["l"] <= tgt):
+                    out.append(p["rr"] - fee_r)
+                    break
+                j += 1
+            i = j + 1
+        else:
+            i += 1
+    return out
+
+
+def r_stats(rs):
+    eq, peak, dd = 0.0, 0.0, 0.0
+    for r in rs:
+        eq += r
+        peak = max(peak, eq)
+        dd = max(dd, peak - eq)
+    gw, gl = sum(r for r in rs if r > 0), -sum(r for r in rs if r < 0)
+    return {"r": eq, "dd": dd, "n": len(rs), "pf": gw / gl if gl else (9.9 if gw else 0.0),
+            "score": eq / max(dd, 3.0)}
+
+
+def learn(days=420, test_frac=0.3):
+    """Testet alle Varianten: wählt auf dem Lern-Teil die Top 5, entscheidet auf dem Prüf-Teil.
+    Neue Einstellungen ersetzen die alten nur, wenn sie im Prüf-Teil klar besser sind."""
+    start = int(time.time() * 1000) - (days + 40) * 86400 * 1000
+    data = {}
+    for c in UNIVERSE:
+        try:
+            bars = fetch_klines(c + QUOTE, start)
+        except Exception as e:  # noqa: BLE001
+            print(f"Lernen: {c} übersprungen ({e})")
+            continue
+        if len(bars) < 600:
+            continue
+        cut = int(len(bars) * (1 - test_frac))
+        cache = {"c": [b["c"] for b in bars]}
+        cache.update({"e": ema(cache["c"], EMA_LEN), "r": rsi(cache["c"], RSI_LEN), "a": atr(bars, ATR_LEN), "x": adx(bars)})
+        data[c] = (bars, cut, cache)
+    if not data:
+        return None
+
+    def evaluate(p, part):
+        per = {}
+        for c, (bars, cut, cache) in data.items():
+            sig, a = signals(bars, p, cache)
+            lo, hi = (EMA_LEN + 20, cut) if part == "train" else (cut, len(bars))
+            per[c] = r_stats(sim_r(bars, sig, a, p, lo, hi))
+        return per
+
+    def total(per, coins):
+        rs = [per[c] for c in coins if c in per]
+        r = sum(x["r"] for x in rs)
+        n = sum(x["n"] for x in rs)
+        dd = max([x["dd"] for x in rs] or [0]) + 0.5 * sum(x["dd"] for x in rs)
+        return {"r": r, "n": n, "score": r / max(dd, 3.0)}
+
+    ranked = []
+    for g in GRID:
+        per = evaluate(g, "train")
+        good = [c for c, x in per.items() if x["n"] >= 6 and x["pf"] >= 1.1]
+        t = total(per, good)
+        if len(good) >= 2 and t["n"] >= 25:
+            ranked.append((t["score"], g, good))
+    ranked.sort(key=lambda x: -x[0])
+    best, best_t = None, None
+    for _, g, good in ranked[:5]:
+        tp = evaluate(g, "test")
+        coins = [c for c in good if tp[c]["n"] >= 2 and tp[c]["r"] > 0] or good
+        t = total(tp, coins)
+        if t["n"] >= 10 and (best_t is None or t["score"] > best_t["score"]):
+            best, best_t = dict(g, coins=coins[:6]), t
+    cur = load("params.json", None) or DEFAULT_PARAMS
+    cur_t = total(evaluate(cur, "test"), cur["coins"])
+    log = load("learn_log.json", [])
+    entry = {"at": iso(int(time.time() * 1000)), "current": {k: cur[k] for k in ("rsi_lo", "sl_atr", "rr", "adx_min", "coins")},
+             "current_test": cur_t, "candidate": best, "candidate_test": best_t, "adopted": False}
+    if best and best_t["r"] > 0 and best_t["score"] > cur_t["score"] * 1.15 + 0.1:
+        v = 4 + sum(1 for x in log if x.get("adopted"))
+        best.update({"version": f"TrendRSI v{v} (auto)", "since": entry["at"]})
+        save("params.json", best)
+        entry["adopted"] = True
+        print(f"Gelernt: neue Version {best['version']} – Prüf-Teil {best_t['r']:+.1f} R statt {cur_t['r']:+.1f} R")
+    else:
+        if not load("params.json", None):
+            save("params.json", dict(DEFAULT_PARAMS, since=entry["at"]))
+        print(f"Gelernt: aktuelle Version bleibt (Prüf-Teil {cur_t['r']:+.1f} R)")
+    log.append(entry)
+    save("learn_log.json", log[-52:])
+    return entry
+
+
 # ───── Live-Durchlauf ─────
 def load(name, default):
     try:
@@ -297,15 +444,30 @@ def iso(ms):
 
 
 def run():
+    now_dt = datetime.now(timezone.utc)
+    params = load("params.json", None)
+    if params is None or (now_dt.weekday() == 6 and now_dt.hour < 4):   # sonntags beim ersten Lauf lernen
+        last = (load("learn_log.json", [{}]) or [{}])[-1].get("at", "")
+        if not last.startswith(now_dt.strftime("%Y-%m-%d")):
+            try:
+                learn()
+            except Exception as e:  # noqa: BLE001
+                print(f"Lernen fehlgeschlagen: {e}")
+        params = load("params.json", None) or DEFAULT_PARAMS
     acct = load("account.json", None) or new_account()
     trades = load("trades.json", [{"id": "0", "kind": "Konto", "at": iso(int(time.time() * 1000)),
                                    "note": "Simuliertes Konto Claude Bot (Python) mit 100.000 $ eröffnet"}])
     equity = load("equity.json", [])
     markets, prices, log, candles = [], {}, [], []
-    for c in COINS:
-        bars, source = fetch_live(c)              # letzte geschlossene 4h-Kerzen
-        sig, a = signals(bars)
-        candles += chart_rows(c, bars)
+    coins = list(dict.fromkeys(params.get("coins", DEFAULT_COINS) + [c for c in acct["positions"]]))
+    for c in coins:
+        try:
+            bars, source = fetch_live(c)          # letzte geschlossene 4h-Kerzen
+        except Exception as e:  # noqa: BLE001
+            print(f"{c}: keine Kurse ({e})")
+            continue
+        sig, a = signals(bars, params)
+        candles += chart_rows(c, bars, p=params)
         last_t = acct["last_bar"].get(c)
         new = [i for i, b in enumerate(bars) if last_t is None or b["t"] > last_t]
         if last_t is None:
@@ -318,7 +480,7 @@ def run():
                 trades.append(tr)
                 log.append(f"{c}: {tr['side']} geschlossen, {tr['pnl']:+.0f} $ ({tr['r']:+.2f} R)")
             if sig[i] and i == len(bars) - 1:     # nur frische Signale handeln
-                p = open_position(acct, c, sig[i], b["c"], a[i], iso(b["t"] + BAR_MS))
+                p = open_position(acct, c, sig[i], b["c"], a[i], iso(b["t"] + BAR_MS), params)
                 if p:
                     log.append(f"{c}: {'Long' if sig[i] == 1 else 'Short'} eröffnet @ {p['entry']:.2f}, "
                                f"Stop {p['stop']:.2f}, Ziel {p['target']:.2f}")
@@ -363,4 +525,4 @@ def status():
 
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
-    {"backtest": backtest, "run": run, "status": status}.get(cmd, status)()
+    {"backtest": backtest, "run": run, "status": status, "learn": learn}.get(cmd, status)()
