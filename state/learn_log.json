@@ -1,0 +1,42 @@
+[
+ {
+  "at": "2026-10-24T16:27:53Z",
+  "current": {
+   "rsi_lo": 35,
+   "sl_atr": 1.5,
+   "rr": 2.0,
+   "adx_min": 0,
+   "coins": [
+    "BTC",
+    "ETH",
+    "SOL"
+   ]
+  },
+  "current_test": {
+   "r": 6.186891696881133,
+   "n": 19,
+   "score": 0.6553644938715157
+  },
+  "candidate": {
+   "rsi_lo": 35,
+   "rsi_hi": 65,
+   "sl_atr": 1.0,
+   "rr": 3.0,
+   "adx_min": 20,
+   "coins": [
+    "ETH",
+    "SOL",
+    "BNB",
+    "DOGE"
+   ],
+   "version": "TrendRSI v4 (auto)",
+   "since": "2026-10-24T16:27:53Z"
+  },
+  "candidate_test": {
+   "r": 23.083492232385385,
+   "n": 22,
+   "score": 3.9700261013146956
+  },
+  "adopted": true
+ }
+]

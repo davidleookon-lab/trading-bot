@@ -1,21 +1,8 @@
 [
  {
-  "coin": "BTC",
-  "symbol": "BINANCE:BTCUSDT",
-  "price": 80599.41,
-  "signal": "Kein Signal",
-  "position": "Flat",
-  "qty": null,
-  "entry": null,
-  "stop": null,
-  "target": null,
-  "unrealized": 0,
-  "checked_at": "2026-10-24T12:32:55Z"
- },
- {
   "coin": "ETH",
   "symbol": "BINANCE:ETHUSDT",
-  "price": 2365.74,
+  "price": 2306.41,
   "signal": "Kein Signal",
   "position": "Flat",
   "qty": null,
@@ -23,12 +10,12 @@
   "stop": null,
   "target": null,
   "unrealized": 0,
-  "checked_at": "2026-10-24T12:32:55Z"
+  "checked_at": "2026-10-24T16:27:57Z"
  },
  {
   "coin": "SOL",
   "symbol": "BINANCE:SOLUSDT",
-  "price": 101.52,
+  "price": 99.78,
   "signal": "Kein Signal",
   "position": "Flat",
   "qty": null,
@@ -36,6 +23,32 @@
   "stop": null,
   "target": null,
   "unrealized": 0,
-  "checked_at": "2026-10-24T12:32:55Z"
+  "checked_at": "2026-10-24T16:27:57Z"
+ },
+ {
+  "coin": "BNB",
+  "symbol": "BINANCE:BNBUSDT",
+  "price": 721.63,
+  "signal": "Kein Signal",
+  "position": "Flat",
+  "qty": null,
+  "entry": null,
+  "stop": null,
+  "target": null,
+  "unrealized": 0,
+  "checked_at": "2026-10-24T16:27:57Z"
+ },
+ {
+  "coin": "DOGE",
+  "symbol": "BINANCE:DOGEUSDT",
+  "price": 0.07569,
+  "signal": "Kein Signal",
+  "position": "Flat",
+  "qty": null,
+  "entry": null,
+  "stop": null,
+  "target": null,
+  "unrealized": 0,
+  "checked_at": "2026-10-24T16:27:57Z"
  }
 ]

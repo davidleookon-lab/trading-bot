@@ -1,0 +1,15 @@
+{
+ "rsi_lo": 35,
+ "rsi_hi": 65,
+ "sl_atr": 1.0,
+ "rr": 3.0,
+ "adx_min": 20,
+ "coins": [
+  "ETH",
+  "SOL",
+  "BNB",
+  "DOGE"
+ ],
+ "version": "TrendRSI v4 (auto)",
+ "since": "2026-10-24T16:27:53Z"
+}
