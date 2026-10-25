@@ -38,5 +38,44 @@
    "score": 3.9700261013146956
   },
   "adopted": true
+ },
+ {
+  "at": "2026-10-25T00:35:59Z",
+  "current": {
+   "rsi_lo": 35,
+   "sl_atr": 1.0,
+   "rr": 3.0,
+   "adx_min": 20,
+   "coins": [
+    "ETH",
+    "SOL",
+    "BNB",
+    "DOGE"
+   ]
+  },
+  "current_test": {
+   "r": 23.083492232385385,
+   "n": 22,
+   "score": 3.9700261013146956
+  },
+  "candidate": {
+   "rsi_lo": 35,
+   "rsi_hi": 65,
+   "sl_atr": 1.0,
+   "rr": 3.0,
+   "adx_min": 20,
+   "coins": [
+    "ETH",
+    "SOL",
+    "BNB",
+    "DOGE"
+   ]
+  },
+  "candidate_test": {
+   "r": 23.083492232385385,
+   "n": 22,
+   "score": 3.9700261013146956
+  },
+  "adopted": false
  }
 ]
