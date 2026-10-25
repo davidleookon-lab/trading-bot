@@ -86,5 +86,13 @@
   "unrealized": 0,
   "open_positions": 0,
   "note": "kein neues Signal"
+ },
+ {
+  "at": "2026-10-25T04:30:33Z",
+  "equity": 100000.0,
+  "realized": 0,
+  "unrealized": 0,
+  "open_positions": 0,
+  "note": "kein neues Signal"
  }
 ]
