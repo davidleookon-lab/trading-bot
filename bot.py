@@ -35,6 +35,10 @@ SL_ATR, RR = 1.5, 2.0
 RISK, MAX_POS_FRAC, FEE = 0.02, 0.6, 0.001
 START_EQUITY = 100_000.0
 MAX_POSITIONS = 4
+MAX_SAME_SIDE = 2          # höchstens 2 Positionen in dieselbe Richtung
+MAX_OPEN_RISK = 0.05       # höchstens 5 % Risiko über alle offenen Positionen
+WEEK_STOP = 0.06           # Notbremse: −6 % in einer Woche → Pause bis Sonntag
+SHADOW_DAYS, SHADOW_MAX_DAYS, SHADOW_MIN_TRADES = 21, 42, 3
 VERSION = "TrendRSI v3 (Python)"
 
 DATA_URL = "https://data-api.binance.vision/api/v3/klines"
@@ -202,8 +206,16 @@ def open_position(acct, coin, side, price, atr_v, t, p=None):
     dist = p["sl_atr"] * atr_v
     if dist <= 0 or coin in acct["positions"] or len(acct["positions"]) >= MAX_POSITIONS:
         return None
+    if acct.get("paused_until") and t < acct["paused_until"]:
+        return None
+    if sum(1 for q in acct["positions"].values() if q["side"] == side) >= MAX_SAME_SIDE:
+        return None
     eq = acct["equity"]
-    qty = min(RISK * eq / dist, MAX_POS_FRAC * eq / price)
+    open_risk = sum(q["risk_usd"] for q in acct["positions"].values())
+    budget = MAX_OPEN_RISK * eq - open_risk
+    if budget <= 0.25 * RISK * eq:
+        return None
+    qty = min(RISK * eq / dist, MAX_POS_FRAC * eq / price, budget / dist)
     pos = {
         "coin": coin, "side": side, "qty": qty, "entry": price,
         "stop": price - side * dist, "target": price + side * p["rr"] * dist,
@@ -244,6 +256,22 @@ def mark_equity(acct, prices):
     unreal = sum(p["side"] * (prices[c] - p["entry"]) * p["qty"] for c, p in acct["positions"].items() if c in prices)
     acct["equity"] = acct["cash"] + unreal
     return unreal
+
+
+def week_brake(acct, now_dt):
+    """Merkt sich die Equity am Wochenanfang; fällt sie um mehr als WEEK_STOP, Pause bis Sonntag."""
+    wk = now_dt.strftime("%G-W%V")
+    if acct.get("week_id") != wk:
+        acct["week_id"], acct["week_start_equity"] = wk, acct["equity"]
+    start = acct.get("week_start_equity") or acct["equity"]
+    if acct["equity"] < start * (1 - WEEK_STOP) and not acct.get("paused_until"):
+        days = (6 - now_dt.weekday()) or 7
+        end = datetime.fromtimestamp(now_dt.timestamp() + days * 86400, timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
+        acct["paused_until"] = end
+        return f"Notbremse: −{(1 - acct['equity'] / start) * 100:.1f} % diese Woche, Pause bis {end[:10]}"
+    if acct.get("paused_until") and iso(int(now_dt.timestamp() * 1000)) >= acct["paused_until"]:
+        acct["paused_until"] = None
+    return None
 
 
 def new_account():
@@ -395,19 +423,36 @@ def learn(days=420, test_frac=0.3):
         tp = evaluate(g, "test")
         coins = [c for c in good if tp[c]["n"] >= 2 and tp[c]["r"] > 0] or good
         t = total(tp, coins)
-        if t["n"] >= 10 and (best_t is None or t["score"] > best_t["score"]):
+        # zwei Prüf-Hälften: beide müssen im Plus sein
+        halves = []
+        for h in (0, 1):
+            hr = 0.0
+            for c in coins:
+                bars, cut, cache = data[c]
+                sig, a = signals(bars, g, cache)
+                mid = cut + (len(bars) - cut) // 2
+                lo, hi = (cut, mid) if h == 0 else (mid, len(bars))
+                hr += sum(sim_r(bars, sig, a, g, lo, hi))
+            halves.append(hr)
+        t["halves"] = halves
+        if t["n"] >= 30 and min(halves) > 0 and (best_t is None or t["score"] > best_t["score"]):
             best, best_t = dict(g, coins=coins[:6]), t
     cur = load("params.json", None) or DEFAULT_PARAMS
     cur_t = total(evaluate(cur, "test"), cur["coins"])
     log = load("learn_log.json", [])
     entry = {"at": iso(int(time.time() * 1000)), "current": {k: cur[k] for k in ("rsi_lo", "sl_atr", "rr", "adx_min", "coins")},
              "current_test": cur_t, "candidate": best, "candidate_test": best_t, "adopted": False}
-    if best and best_t["r"] > 0 and best_t["score"] > cur_t["score"] * 1.15 + 0.1:
-        v = 4 + sum(1 for x in log if x.get("adopted"))
+    same = best and all(best[k] == cur.get(k) for k in ("rsi_lo", "sl_atr", "rr", "adx_min"))
+    if load("challenger.json", None):
+        print("Gelernt: es läuft schon ein Herausforderer im Schattenbetrieb")
+    elif best and not same and best_t["r"] > 0 and best_t["score"] > cur_t["score"] * 1.15 + 0.1:
+        v = 5 + sum(1 for x in log if x.get("adopted"))
         best.update({"version": f"TrendRSI v{v} (auto)", "since": entry["at"]})
-        save("params.json", best)
-        entry["adopted"] = True
-        print(f"Gelernt: neue Version {best['version']} – Prüf-Teil {best_t['r']:+.1f} R statt {cur_t['r']:+.1f} R")
+        save("challenger.json", best)
+        save("shadow_account.json", new_account())
+        entry["challenger"] = True
+        print(f"Gelernt: Herausforderer {best['version']} startet im Schattenbetrieb "
+              f"(Prüf-Teil {best_t['r']:+.1f} R statt {cur_t['r']:+.1f} R)")
     else:
         if not load("params.json", None):
             save("params.json", dict(DEFAULT_PARAMS, since=entry["at"]))
@@ -443,6 +488,51 @@ def iso(ms):
     return datetime.fromtimestamp(ms / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def shadow_step(c, bars, now_dt, shadow, ch):
+    """Herausforderer handelt im Schattenkonto auf denselben Kerzen mit (ohne echte Orders)."""
+    sig, a = signals(bars, ch)
+    last_t = shadow["last_bar"].get(c)
+    new = [i for i, b in enumerate(bars) if last_t is None or b["t"] > last_t]
+    if last_t is None:
+        new = new[-1:]
+    for i in new:
+        tr = check_exit(shadow, c, bars[i])
+        if tr:
+            shadow.setdefault("closed", []).append(round(tr["r"], 3))
+        if sig[i] and i == len(bars) - 1:
+            open_position(shadow, c, sig[i], bars[i]["c"], a[i], iso(bars[i]["t"] + BAR_MS), ch)
+    shadow["last_bar"][c] = bars[-1]["t"]
+
+
+def shadow_decide(now_dt, ch, shadow, trades, params):
+    """Nach SHADOW_DAYS: Herausforderer übernehmen, wenn er live mindestens so gut war wie der Champion."""
+    started = datetime.fromisoformat(ch["since"].replace("Z", "+00:00"))
+    days = (now_dt - started).days
+    if days < SHADOW_DAYS:
+        return None
+    ch_r = sum(shadow.get("closed", []))
+    ch_n = len(shadow.get("closed", []))
+    champ = [t for t in trades if t.get("kind") == "Trade" and t.get("closed_at", "") >= ch["since"]]
+    cp_r = sum(t["r"] for t in champ)
+    log = load("learn_log.json", [])
+    if ch_n >= SHADOW_MIN_TRADES and ch_r > cp_r:
+        save("params.json", ch)
+        msg = f"Herausforderer {ch['version']} \u00fcbernommen: Schatten {ch_r:+.1f} R ({ch_n} Trades) vs. Champion {cp_r:+.1f} R"
+        log.append({"at": iso(int(now_dt.timestamp() * 1000)), "adopted": True, "shadow_r": ch_r, "champion_r": cp_r, "version": ch["version"]})
+    elif days >= SHADOW_MAX_DAYS or (ch_n >= SHADOW_MIN_TRADES and ch_r <= cp_r):
+        msg = f"Herausforderer {ch['version']} verworfen: Schatten {ch_r:+.1f} R ({ch_n} Trades) vs. Champion {cp_r:+.1f} R"
+        log.append({"at": iso(int(now_dt.timestamp() * 1000)), "adopted": False, "shadow_r": ch_r, "champion_r": cp_r, "version": ch["version"]})
+    else:
+        return None
+    save("learn_log.json", log[-52:])
+    for f in ("challenger.json", "shadow_account.json"):
+        try:
+            os.remove(os.path.join(STATE_DIR, f))
+        except FileNotFoundError:
+            pass
+    return msg
+
+
 def run():
     now_dt = datetime.now(timezone.utc)
     params = load("params.json", None)
@@ -459,6 +549,12 @@ def run():
                                    "note": "Simuliertes Konto Claude Bot (Python) mit 100.000 $ eröffnet"}])
     equity = load("equity.json", [])
     markets, prices, log, candles = [], {}, [], []
+    ch, shadow = load("challenger.json", None), load("shadow_account.json", None)
+    if ch and shadow is None:
+        shadow = new_account()
+    brake = week_brake(acct, now_dt)
+    if brake:
+        log.append(brake)
     coins = list(dict.fromkeys(params.get("coins", DEFAULT_COINS) + [c for c in acct["positions"]]))
     for c in coins:
         try:
@@ -468,6 +564,8 @@ def run():
             continue
         sig, a = signals(bars, params)
         candles += chart_rows(c, bars, p=params)
+        if ch and c in ch.get("coins", []):
+            shadow_step(c, bars, now_dt, shadow, ch)
         last_t = acct["last_bar"].get(c)
         new = [i for i, b in enumerate(bars) if last_t is None or b["t"] > last_t]
         if last_t is None:
@@ -489,6 +587,18 @@ def run():
         s = sig[-1]
         markets.append({"coin": c, "symbol": f"BINANCE:{c}{QUOTE}" if source == "Binance" else f"KRAKEN:{c}USD", "price": prices[c],
                         "signal": "Long-Signal" if s == 1 else "Short-Signal" if s == -1 else "Kein Signal"})
+    if ch:
+        for c in ch.get("coins", []):
+            if c not in coins:
+                try:
+                    shadow_step(c, fetch_live(c)[0], now_dt, shadow, ch)
+                except Exception as e:  # noqa: BLE001
+                    print(f"Schatten {c}: {e}")
+        mark_equity(shadow, prices)
+        save("shadow_account.json", shadow)
+        decided = shadow_decide(now_dt, ch, shadow, trades, params)
+        if decided:
+            log.append(decided)
     unreal = mark_equity(acct, prices)
     now = iso(int(time.time() * 1000))
     for m in markets:
